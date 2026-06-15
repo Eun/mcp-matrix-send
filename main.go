@@ -125,16 +125,14 @@ func buildMCPServer(cfg *Config, matrixClient *mautrix.Client) *server.MCPServer
 		server.WithToolCapabilities(true),
 	)
 
-	roomIDOpts := []mcp.PropertyOption{
-		mcp.Description("The Matrix room ID (e.g. !abc123:example.com)"),
-	}
-	if cfg.DefaultRoom == "" {
-		roomIDOpts = append(roomIDOpts, mcp.Required())
-	}
-
 	sendMessageTool := mcp.NewTool("send_message",
 		mcp.WithDescription("Send a message to a Matrix room"),
-		mcp.WithString("room_id", roomIDOpts...),
+		mcp.WithString("room_id",
+			mcp.Description(
+				"The Matrix room ID (e.g. !abc123:example.com). "+
+					"Optional if a default room is configured on the server.",
+			),
+		),
 		mcp.WithString("message",
 			mcp.Description("The message text to send"),
 			mcp.Required(),
