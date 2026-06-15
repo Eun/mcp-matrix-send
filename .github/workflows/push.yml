@@ -1,0 +1,77 @@
+# this workflow will run on all pushes.
+on:
+  push:
+
+name: "push"
+jobs:
+  # run golangci-lint to lint the golang source code.
+  # the configuration is at /.golangci.yml.
+  linter:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout code
+        uses: actions/checkout@v4
+      -
+        name: Install mise
+        uses: jdx/mise-action@v2
+      -
+        name: Lint
+        run: mise run lint
+
+  # use nancy to scan for vulnerabilities.
+  vulnerability_scanner:
+    name: Vulnerability scanner
+    runs-on: ubuntu-latest
+    steps:
+      -
+        uses: actions/checkout@v4
+      -
+        name: Install mise
+        uses: jdx/mise-action@v2
+      -
+        name: nancy
+        run: go list -json -m all | docker run -i sonatypecommunity/nancy:latest
+
+  # run tests.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout code
+        uses: actions/checkout@v4
+      -
+        name: Install mise
+        uses: jdx/mise-action@v2
+      -
+        name: Test
+        run: mise run test
+
+  # ensure the project builds successfully.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      -
+        name: Checkout code
+        uses: actions/checkout@v4
+      -
+        name: Install mise
+        uses: jdx/mise-action@v2
+      -
+        name: Build
+        run: mise run build
+
+  # draft your next release notes as pull requests are merged into "main"
+  # the configuration is at /.github/release-drafter.yml.
+  update_release_draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        if: github.ref_name == github.event.repository.default_branch
+        with:
+          config-name: release-drafter.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

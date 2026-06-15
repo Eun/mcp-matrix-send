@@ -1,0 +1,99 @@
+version: 2
+project_name: "mcp-matrix-send"
+builds:
+  -
+    id: "mcp-matrix-send"
+    binary: "mcp-matrix-send"
+    env:
+      - "CGO_ENABLED=0"
+    goos:
+      - "linux"
+      - "darwin"
+    goarch:
+      - "amd64"
+      - "arm64"
+    ldflags:
+      - -s
+      - -w
+      - -X "main.version={{.Version}}"
+      - -X "main.commit={{.Commit}}"
+      - -X "main.date={{.Date}}"
+archives:
+  - name_template: "mcp-matrix-send_{{.Version}}_{{.Os}}_{{.Arch}}"
+checksum:
+  name_template: 'checksums.txt'
+snapshot:
+  version_template: "{{.Tag}}-next"
+changelog:
+  disable: true
+nfpms:
+  -
+    id: "mcp-matrix-send"
+    package_name: "mcp-matrix-send"
+    homepage: "https://github.com/Eun/mcp-matrix-send"
+    maintainer: "Tobias Salzmann <tobias@salzmann.berlin>"
+    description: "MCP server that sends messages to Matrix rooms"
+    license: "MIT"
+    formats:
+      - "deb"
+    epoch: 1
+dockers:
+  -
+    id: "mcp-matrix-send-amd64"
+    goos: "linux"
+    goarch: "amd64"
+    ids:
+      - "mcp-matrix-send"
+    image_templates:
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-amd64"
+    skip_push: false
+    dockerfile: ".github/Dockerfile"
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=BINARY=mcp-matrix-send"
+      - "--platform=linux/amd64"
+  -
+    id: "mcp-matrix-send-arm64"
+    goos: "linux"
+    goarch: "arm64"
+    ids:
+      - "mcp-matrix-send"
+    image_templates:
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-arm64"
+    skip_push: false
+    dockerfile: ".github/Dockerfile"
+    use: buildx
+    build_flag_templates:
+      - "--pull"
+      - "--label=org.opencontainers.image.created={{.Date}}"
+      - "--label=org.opencontainers.image.title={{.ProjectName}}"
+      - "--label=org.opencontainers.image.revision={{.FullCommit}}"
+      - "--label=org.opencontainers.image.version={{.Version}}"
+      - "--build-arg=BINARY=mcp-matrix-send"
+      - "--platform=linux/arm64"
+docker_manifests:
+  -
+    name_template: "ghcr.io/eun/mcp-matrix-send:{{.Tag}}"
+    image_templates:
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-amd64"
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-arm64"
+  -
+    name_template: "ghcr.io/eun/mcp-matrix-send:{{.Major}}"
+    image_templates:
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-amd64"
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-arm64"
+  -
+    name_template: "ghcr.io/eun/mcp-matrix-send:{{.Major}}.{{.Minor}}"
+    image_templates:
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-amd64"
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-arm64"
+  -
+    name_template: "ghcr.io/eun/mcp-matrix-send:latest"
+    image_templates:
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-amd64"
+      - "ghcr.io/eun/mcp-matrix-send:{{.Tag}}-arm64"
