@@ -36,6 +36,7 @@ type Config struct {
 	HomeserverURL string
 	AccessToken   string
 	UserID        string
+	DefaultRoom   string // optional default room ID from MATRIX_DEFAULT_ROOM
 
 	// MCP transport settings.
 	Transport  string // "stdio" or "http"
@@ -53,6 +54,7 @@ func loadConfig() (*Config, error) {
 		HomeserverURL: os.Getenv("MATRIX_HOMESERVER_URL"),
 		AccessToken:   os.Getenv("MATRIX_ACCESS_TOKEN"),
 		UserID:        os.Getenv("MATRIX_USER_ID"),
+		DefaultRoom:   os.Getenv("MATRIX_DEFAULT_ROOM"),
 		Transport:     os.Getenv("MCP_TRANSPORT"),
 		ListenAddr:    os.Getenv("MCP_LISTEN_ADDR"),
 		BearerToken:   os.Getenv("MCP_BEARER_TOKEN"),
@@ -123,12 +125,16 @@ func buildMCPServer(cfg *Config, matrixClient *mautrix.Client) *server.MCPServer
 		server.WithToolCapabilities(true),
 	)
 
+	roomIDOpts := []mcp.PropertyOption{
+		mcp.Description("The Matrix room ID (e.g. !abc123:example.com)"),
+	}
+	if cfg.DefaultRoom == "" {
+		roomIDOpts = append(roomIDOpts, mcp.Required())
+	}
+
 	sendMessageTool := mcp.NewTool("send_message",
 		mcp.WithDescription("Send a message to a Matrix room"),
-		mcp.WithString("room_id",
-			mcp.Description("The Matrix room ID (e.g. !abc123:example.com)"),
-			mcp.Required(),
-		),
+		mcp.WithString("room_id", roomIDOpts...),
 		mcp.WithString("message",
 			mcp.Description("The message text to send"),
 			mcp.Required(),
@@ -142,9 +148,12 @@ func buildMCPServer(cfg *Config, matrixClient *mautrix.Client) *server.MCPServer
 
 func sendMessageHandler(cfg *Config, matrixClient *mautrix.Client) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		roomID, ok := request.GetArguments()["room_id"].(string)
-		if !ok || roomID == "" {
-			return mcp.NewToolResultError("room_id is required"), nil
+		roomID, _ := request.GetArguments()["room_id"].(string)
+		if roomID == "" {
+			roomID = cfg.DefaultRoom
+		}
+		if roomID == "" {
+			return mcp.NewToolResultError("room_id is required (no default room configured)"), nil
 		}
 		message, ok := request.GetArguments()["message"].(string)
 		if !ok || message == "" {

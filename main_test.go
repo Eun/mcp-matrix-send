@@ -14,6 +14,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	os.Unsetenv("MCP_LISTEN_ADDR")
 	os.Unsetenv("MCP_BEARER_TOKEN")
 	os.Unsetenv("MATRIX_ROOM_WHITELIST")
+	os.Unsetenv("MATRIX_DEFAULT_ROOM")
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -24,6 +25,9 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if len(cfg.RoomWhitelist) != 0 {
 		t.Errorf("expected empty whitelist, got %v", cfg.RoomWhitelist)
+	}
+	if cfg.DefaultRoom != "" {
+		t.Errorf("expected empty default room, got %q", cfg.DefaultRoom)
 	}
 }
 
@@ -78,6 +82,22 @@ func TestIsRoomAllowed_WithWhitelist(t *testing.T) {
 	}
 	if isRoomAllowed(cfg, "!denied:example.com") {
 		t.Error("expected denied room to fail")
+	}
+}
+
+func TestLoadConfig_DefaultRoom(t *testing.T) {
+	t.Setenv("MATRIX_HOMESERVER_URL", "https://matrix.example.com")
+	t.Setenv("MATRIX_ACCESS_TOKEN", "token123")
+	t.Setenv("MATRIX_USER_ID", "@bot:example.com")
+	t.Setenv("MATRIX_DEFAULT_ROOM", "!default:example.com")
+	os.Unsetenv("MCP_TRANSPORT")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.DefaultRoom != "!default:example.com" {
+		t.Errorf("expected default room '!default:example.com', got %q", cfg.DefaultRoom)
 	}
 }
 

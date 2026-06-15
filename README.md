@@ -21,6 +21,7 @@ All configuration is via environment variables:
 | `MCP_TRANSPORT` | No | `stdio` (default) or `http` |
 | `MCP_LISTEN_ADDR` | No | HTTP listen address (default `:8080`) |
 | `MCP_BEARER_TOKEN` | HTTP only | Bearer token for HTTP authentication (required for HTTP transport) |
+| `MATRIX_DEFAULT_ROOM` | No | Default Matrix room ID. When set, `room_id` becomes optional in tool calls |
 | `MATRIX_ROOM_WHITELIST` | No | Comma-separated list of allowed room IDs. Empty = all rooms allowed |
 
 ## Usage
