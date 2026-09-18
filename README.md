@@ -5,6 +5,8 @@ An MCP (Model Context Protocol) server that sends messages to Matrix rooms. Supp
 ## Features
 
 - **Send messages** to any Matrix room via the `send_message` MCP tool
+- **Schedule messages** for later delivery with the optional `send_at` parameter
+- **Crash-safe scheduling** — pending scheduled messages are persisted to a JSON file and re-sent after a restart
 - **Stdio transport** for local agent integration
 - **HTTP transport** with bearer token authentication
 - **Room whitelist** to restrict which rooms agents can message
@@ -23,6 +25,7 @@ All configuration is via environment variables:
 | `MCP_BEARER_TOKEN` | HTTP only | Bearer token for HTTP authentication (required for HTTP transport) |
 | `MATRIX_DEFAULT_ROOM` | No | Default Matrix room ID. When set, `room_id` becomes optional in tool calls |
 | `MATRIX_ROOM_WHITELIST` | No | Comma-separated list of allowed room IDs. Empty = all rooms allowed |
+| `MATRIX_SCHEDULE_FILE` | No | Path to the JSON file used to persist scheduled messages (default `scheduled_messages.json`) |
 
 ## Usage
 
@@ -66,8 +69,32 @@ When set, the server only allows sending messages to the listed room IDs. If uns
 Send a text message to a Matrix room.
 
 **Parameters:**
-- `room_id` (string, required) — The Matrix room ID (e.g. `!abc123:example.com`)
+- `room_id` (string, required) — The Matrix room ID (e.g. `!abc123:example.com`). Optional if `MATRIX_DEFAULT_ROOM` is configured.
 - `message` (string, required) — The message text to send
+- `send_at` (string, optional) — RFC3339 timestamp (e.g. `2025-01-02T15:04:05Z`) at which to send the message. When omitted or in the past, the message is sent immediately.
+
+#### Scheduling
+
+When `send_at` is set to a future time, the message is queued and delivered by a
+background scheduler at that time. Scheduled messages are written to the JSON
+file configured by `MATRIX_SCHEDULE_FILE` (default `scheduled_messages.json`)
+**before** the tool call returns, so they are not lost if the process crashes or
+restarts — on startup the server reloads the file and re-arms any pending
+messages. A delivered message is removed from the file; a message that fails to
+send is retried on the next scheduler tick.
+
+The file is a JSON array of objects:
+
+```json
+[
+  {
+    "id": "b1c2...",
+    "room_id": "!abc123:example.com",
+    "message": "hello later",
+    "send_at": "2025-01-02T15:04:05Z"
+  }
+]
+```
 
 ## Docker
 

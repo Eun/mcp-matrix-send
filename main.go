@@ -47,6 +47,10 @@ type Config struct {
 
 	// Room whitelist (comma-separated). Empty means all rooms are allowed.
 	RoomWhitelist []string
+
+	// SchedulePath is the JSON file where scheduled (future) messages are
+	// persisted so they survive a process crash or restart.
+	SchedulePath string
 }
 
 func loadConfig() (*Config, error) {
@@ -58,6 +62,11 @@ func loadConfig() (*Config, error) {
 		Transport:     os.Getenv("MCP_TRANSPORT"),
 		ListenAddr:    os.Getenv("MCP_LISTEN_ADDR"),
 		BearerToken:   os.Getenv("MCP_BEARER_TOKEN"),
+		SchedulePath:  os.Getenv("MATRIX_SCHEDULE_FILE"),
+	}
+
+	if cfg.SchedulePath == "" {
+		cfg.SchedulePath = "scheduled_messages.json"
 	}
 
 	if cfg.HomeserverURL == "" {
@@ -118,7 +127,7 @@ func newMatrixClient(cfg *Config) (*mautrix.Client, error) {
 	return client, nil
 }
 
-func buildMCPServer(cfg *Config, matrixClient *mautrix.Client) *server.MCPServer {
+func buildMCPServer(cfg *Config, matrixClient *mautrix.Client, scheduler *Scheduler) *server.MCPServer {
 	mcpServer := server.NewMCPServer(
 		"mcp-matrix-send",
 		version,
@@ -126,7 +135,7 @@ func buildMCPServer(cfg *Config, matrixClient *mautrix.Client) *server.MCPServer
 	)
 
 	sendMessageTool := mcp.NewTool("send_message",
-		mcp.WithDescription("Send a message to a Matrix room"),
+		mcp.WithDescription("Send a message to a Matrix room, optionally at a later time"),
 		mcp.WithString("room_id",
 			mcp.Description(
 				"The Matrix room ID (e.g. !abc123:example.com). "+
@@ -137,14 +146,22 @@ func buildMCPServer(cfg *Config, matrixClient *mautrix.Client) *server.MCPServer
 			mcp.Description("The message text to send"),
 			mcp.Required(),
 		),
+		mcp.WithString("send_at",
+			mcp.Description(
+				"Optional RFC3339 timestamp (e.g. 2025-01-02T15:04:05Z) at which to "+
+					"send the message. When omitted or in the past, the message is sent "+
+					"immediately. Scheduled messages are persisted to disk and survive "+
+					"a process restart.",
+			),
+		),
 	)
 
-	mcpServer.AddTool(sendMessageTool, sendMessageHandler(cfg, matrixClient))
+	mcpServer.AddTool(sendMessageTool, sendMessageHandler(cfg, matrixClient, scheduler))
 
 	return mcpServer
 }
 
-func sendMessageHandler(cfg *Config, matrixClient *mautrix.Client) server.ToolHandlerFunc {
+func sendMessageHandler(cfg *Config, matrixClient *mautrix.Client, scheduler *Scheduler) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		roomID, _ := request.GetArguments()["room_id"].(string)
 		if roomID == "" {
@@ -162,6 +179,13 @@ func sendMessageHandler(cfg *Config, matrixClient *mautrix.Client) server.ToolHa
 			return mcp.NewToolResultError(fmt.Sprintf("room %s is not in the whitelist", roomID)), nil
 		}
 
+		// Parse the optional schedule time. When absent (or already in the
+		// past) the message is sent immediately.
+		sendAtRaw, _ := request.GetArguments()["send_at"].(string)
+		if handled, result := maybeSchedule(scheduler, roomID, message, sendAtRaw); handled {
+			return result, nil
+		}
+
 		_, err := matrixClient.SendMessageEvent(ctx, id.RoomID(roomID), event.EventMessage, &event.MessageEventContent{
 			MsgType: event.MsgText,
 			Body:    message,
@@ -172,6 +196,40 @@ func sendMessageHandler(cfg *Config, matrixClient *mautrix.Client) server.ToolHa
 
 		return mcp.NewToolResultText("message sent successfully"), nil
 	}
+}
+
+// maybeSchedule inspects the optional send_at argument. It returns handled=true
+// with a tool result when the request should not be sent immediately: either an
+// invalid timestamp, or a future timestamp that has been queued for later
+// delivery. When send_at is empty or already in the past it returns
+// handled=false so the caller sends the message right away.
+func maybeSchedule(scheduler *Scheduler, roomID, message, sendAtRaw string) (bool, *mcp.CallToolResult) {
+	sendAtRaw = strings.TrimSpace(sendAtRaw)
+	if sendAtRaw == "" {
+		return false, nil
+	}
+
+	sendAt, err := time.Parse(time.RFC3339, sendAtRaw)
+	if err != nil {
+		return true, mcp.NewToolResultError(
+			fmt.Sprintf("invalid send_at %q: expected RFC3339 timestamp (e.g. 2025-01-02T15:04:05Z)", sendAtRaw),
+		)
+	}
+	if !sendAt.After(time.Now()) {
+		// Timestamp is in the past: send immediately.
+		return false, nil
+	}
+	if scheduler == nil {
+		return true, mcp.NewToolResultError("scheduling is not available")
+	}
+
+	msg, err := scheduler.Schedule(roomID, message, sendAt)
+	if err != nil {
+		return true, mcp.NewToolResultError(fmt.Sprintf("failed to schedule message: %v", err))
+	}
+	return true, mcp.NewToolResultText(fmt.Sprintf(
+		"message scheduled for %s (id %s)", msg.SendAt.Format(time.RFC3339), msg.ID,
+	))
 }
 
 // bearerAuthMiddleware validates the Authorization header for HTTP transport.
@@ -198,7 +256,23 @@ func run() error {
 		return err
 	}
 
-	mcpServer := buildMCPServer(cfg, matrixClient)
+	scheduler, err := NewScheduler(cfg.SchedulePath, matrixClient)
+	if err != nil {
+		return fmt.Errorf("initializing scheduler: %w", err)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	scheduler.Start(ctx)
+	defer scheduler.Stop()
+
+	if n := scheduler.Pending(); n > 0 {
+		//nolint:gosec // schedule path is operator-supplied startup info
+		log.Printf("restored %d scheduled message(s) from %s", n, cfg.SchedulePath)
+	}
+
+	mcpServer := buildMCPServer(cfg, matrixClient, scheduler)
 
 	switch cfg.Transport {
 	case transportStdio:
@@ -221,9 +295,6 @@ func run() error {
 			Handler:           mux,
 			ReadHeaderTimeout: 10 * time.Second,
 		}
-
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
 
 		go func() {
 			<-ctx.Done()

@@ -3,7 +3,52 @@ package main
 import (
 	"os"
 	"testing"
+	"time"
 )
+
+func TestMaybeSchedule_ImmediateWhenEmpty(t *testing.T) {
+	handled, result := maybeSchedule(nil, "!room:example.com", "hi", "")
+	if handled {
+		t.Fatalf("expected not handled (immediate send) for empty send_at, got result %+v", result)
+	}
+}
+
+func TestMaybeSchedule_ImmediateWhenPast(t *testing.T) {
+	past := "2000-01-01T00:00:00Z"
+	handled, _ := maybeSchedule(nil, "!room:example.com", "hi", past)
+	if handled {
+		t.Fatal("expected not handled (immediate send) for past send_at")
+	}
+}
+
+func TestMaybeSchedule_InvalidTimestamp(t *testing.T) {
+	handled, result := maybeSchedule(nil, "!room:example.com", "hi", "not-a-time")
+	if !handled {
+		t.Fatal("expected invalid timestamp to be handled")
+	}
+	if result == nil || !result.IsError {
+		t.Fatalf("expected error result, got %+v", result)
+	}
+}
+
+func TestMaybeSchedule_FutureQueues(t *testing.T) {
+	path := t.TempDir() + "/schedule.json"
+	s, err := NewScheduler(path, nil)
+	if err != nil {
+		t.Fatalf("NewScheduler: %v", err)
+	}
+	future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	handled, result := maybeSchedule(s, "!room:example.com", "later", future)
+	if !handled {
+		t.Fatal("expected future send_at to be handled (queued)")
+	}
+	if result == nil || result.IsError {
+		t.Fatalf("expected success result, got %+v", result)
+	}
+	if s.Pending() != 1 {
+		t.Fatalf("expected 1 pending message, got %d", s.Pending())
+	}
+}
 
 func TestLoadConfig_Defaults(t *testing.T) {
 	t.Setenv("MATRIX_HOMESERVER_URL", "https://matrix.example.com")
@@ -28,6 +73,38 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.DefaultRoom != "" {
 		t.Errorf("expected empty default room, got %q", cfg.DefaultRoom)
+	}
+}
+
+func TestLoadConfig_SchedulePathDefault(t *testing.T) {
+	t.Setenv("MATRIX_HOMESERVER_URL", "https://matrix.example.com")
+	t.Setenv("MATRIX_ACCESS_TOKEN", "token123")
+	t.Setenv("MATRIX_USER_ID", "@bot:example.com")
+	os.Unsetenv("MCP_TRANSPORT")
+	os.Unsetenv("MATRIX_SCHEDULE_FILE")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SchedulePath != "scheduled_messages.json" {
+		t.Errorf("expected default schedule path, got %q", cfg.SchedulePath)
+	}
+}
+
+func TestLoadConfig_SchedulePathOverride(t *testing.T) {
+	t.Setenv("MATRIX_HOMESERVER_URL", "https://matrix.example.com")
+	t.Setenv("MATRIX_ACCESS_TOKEN", "token123")
+	t.Setenv("MATRIX_USER_ID", "@bot:example.com")
+	t.Setenv("MATRIX_SCHEDULE_FILE", "/tmp/custom-schedule.json")
+	os.Unsetenv("MCP_TRANSPORT")
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SchedulePath != "/tmp/custom-schedule.json" {
+		t.Errorf("expected overridden schedule path, got %q", cfg.SchedulePath)
 	}
 }
 
